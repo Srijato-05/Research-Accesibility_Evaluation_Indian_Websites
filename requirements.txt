@@ -1,6 +1,0 @@
-gspread
-selenium
-axe-selenium-python
-requests
-beautifulsoup4
-webdriver-manager
