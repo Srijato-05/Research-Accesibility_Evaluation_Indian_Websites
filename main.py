@@ -31,16 +31,16 @@ def main():
     g_client = sheets_handler.setup_client()
     if not g_client: return
 
-    # --- SETUP AND RESUME LOGIC ---
+    # --- SETUP AND DYNAMIC RESUME LOGIC ---
     sheets_handler.setup_target_sheet(g_client)
-    sheets_handler.setup_violation_details_sheet(g_client) # Call the new setup function
+    sheets_handler.setup_violation_details_sheet(g_client)
     
     urls_to_audit = sheets_handler.get_website_urls(g_client)
     if not urls_to_audit:
         print("No website URLs found. Exiting."); return
 
     audited_pages_map = sheets_handler.get_audited_pages_map(g_client)
-    print(f"Found {len(urls_to_audit)} websites. Will audit up to {config.TARGET_SUBPAGE_COUNT} pages per site.")
+    print(f"Found {len(urls_to_audit)} websites to check. Will audit up to {config.TARGET_SUBPAGE_COUNT} pages per site.")
 
     driver = setup_driver()
     if not driver: return
@@ -56,19 +56,21 @@ def main():
         print(f"\n--- Auditing '{base_url}'. Found {audited_count} existing pages. ---")
         
         needed_count = config.TARGET_SUBPAGE_COUNT - audited_count
+        
+        # Build a list of pages to check, dynamically excluding already audited ones
         pages_to_check = []
+        if base_url not in audited_subpages:
+            pages_to_check.append(base_url)
         
-        if base_url not in audited_subpages: pages_to_check.append(base_url)
-        
-        print(f"  Searching for {needed_count} new subpages...")
-        found_links = analyzer.get_internal_links(base_url, limit=config.TARGET_SUBPAGE_COUNT * 2)
-        
-        new_links_found = 0
-        for link in found_links:
-            if link not in audited_subpages:
-                pages_to_check.append(link)
-                new_links_found += 1
-                if new_links_found >= needed_count: break
+        # Only search for new links if we still need more pages
+        if len(pages_to_check) < needed_count:
+            print(f"  Searching for new subpages...")
+            found_links = analyzer.get_internal_links(base_url, limit=config.TARGET_SUBPAGE_COUNT * 2)
+            for link in found_links:
+                if link not in audited_subpages:
+                    pages_to_check.append(link)
+                    if len(pages_to_check) >= needed_count:
+                        break
         
         if not pages_to_check:
             print("  No new, un-audited subpages were found."); continue
@@ -79,28 +81,37 @@ def main():
             analysis_results = analyzer.analyze_page(driver, page_url)
             if analysis_results:
                 processed_data = analyzer.process_analysis_results(analysis_results)
-                if 'error' in processed_data: continue
+                if 'error' in processed_data:
+                    print(f"    Could not process analysis results for {page_url}."); continue
 
-                # This part logs to the summary sheet (Accessibility_Scores)
                 v = processed_data['violations']
                 s = processed_data['severity']
                 print(f"    Compliance: {processed_data['highest_pass_level']} | Total WCAG Violations: {v['total']}")
                 
-                row_data = [
+                # Prepare data for both sheets
+                summary_row_data = [
                     base_url, page_url, processed_data['highest_pass_level'], v['total'],
                     v['A'], v['AA'], v['AAA'], s['severe'], s['moderate'], s['mild'], s['unknown'],
                     datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 ]
-                sheets_handler.append_row(g_client, row_data)
-
-                # --- NEW: Log detailed violations to the new sheet ---
+                
                 violation_details_to_log = []
                 for detail in processed_data.get('details', []):
                     violation_details_to_log.append([
                         base_url, page_url, detail.get('id'), detail.get('impact'),
                         detail.get('description'), detail.get('help_url')
                     ])
-                sheets_handler.append_violation_details(g_client, violation_details_to_log)
+
+                # --- ATOMIC WRITING BLOCK ---
+                # Try to write to both sheets. If either fails, the error is logged
+                # and the script will retry this page on the next run because it
+                # won't have been added to the 'audited_pages_map'.
+                try:
+                    sheets_handler.append_row(g_client, summary_row_data)
+                    sheets_handler.append_violation_details(g_client, violation_details_to_log)
+                except Exception as e:
+                    print(f"    Failed to log data for {page_url}. It will be re-audited on the next run.")
+                    # Optional: break or continue depending on desired behavior on failure
             else:
                 print(f"    Skipping analysis for {page_url} due to error.")
 

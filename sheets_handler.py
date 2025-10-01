@@ -23,11 +23,11 @@ def get_website_urls(client):
         return []
 
 def setup_target_sheet(client):
-    """Ensures the target sheet exists and has a header row."""
+    """Ensures the 'Accessibility_Scores' sheet exists and has a header row."""
     try:
         sheet = client.open(config.GOOGLE_SHEET_NAME)
         try:
-            target_sheet = sheet.worksheet(config.TARGET_SHEET_NAME)
+            sheet.worksheet(config.TARGET_SHEET_NAME)
             print(f"Found existing results sheet: '{config.TARGET_SHEET_NAME}'.")
         except gspread.exceptions.WorksheetNotFound:
             print(f"Creating new results sheet: '{config.TARGET_SHEET_NAME}'...")
@@ -44,13 +44,16 @@ def setup_target_sheet(client):
 
 def get_audited_pages_map(client):
     """
-    Reads the target sheet and returns a dictionary mapping each main website
-    to a set of its already audited subpage URLs.
+    Reads the 'Accessibility_Scores' sheet (the source of truth) and returns a
+    dictionary mapping each main website to a set of its already audited subpage URLs.
+    This is the core of the script's resilience and duplicate prevention.
     """
     audited_map = {}
     try:
         sheet = client.open(config.GOOGLE_SHEET_NAME).worksheet(config.TARGET_SHEET_NAME)
+        # Using get_all_records is robust against empty sheets
         records = sheet.get_all_records()
+        print(f"Found {len(records)} existing records in '{config.TARGET_SHEET_NAME}' to check for progress.")
         for record in records:
             main_site = record.get('Main_Website')
             sub_page = record.get('Sub_Page')
@@ -60,16 +63,17 @@ def get_audited_pages_map(client):
                 audited_map[main_site].add(sub_page)
         return audited_map
     except Exception as e:
-        print(f"Could not read the target sheet to determine progress. Error: {e}")
+        print(f"Warning: Could not read the target sheet to determine progress. May re-audit some pages. Error: {e}")
         return {}
 
 def append_row(client, row_data):
-    """Appends a single row of data to the target sheet."""
+    """Appends a single summary row to the 'Accessibility_Scores' sheet."""
     try:
         sheet = client.open(config.GOOGLE_SHEET_NAME).worksheet(config.TARGET_SHEET_NAME)
         sheet.append_row(row_data)
     except Exception as e:
-        print(f"  !! Failed to save result to Google Sheet. Error: {e}")
+        print(f"  !! CRITICAL: Failed to save summary result. Error: {e}")
+        raise # Re-raise the exception to signal failure
 
 def setup_violation_details_sheet(client):
     """Ensures the 'Violation_Details' sheet exists with a header."""
@@ -86,11 +90,12 @@ def setup_violation_details_sheet(client):
         print(f"Failed to setup violation details sheet: {e}")
 
 def append_violation_details(client, details_rows):
-    """Appends a list of violation rows to the 'Violation_Details' sheet."""
+    """Appends a list of violation detail rows to the 'Violation_Details' sheet."""
     if not details_rows:
-        return
+        return # Do nothing if there are no violations
     try:
         sheet = client.open(config.GOOGLE_SHEET_NAME).worksheet("Violation_Details")
         sheet.append_rows(details_rows)
     except Exception as e:
-        print(f"  !! Failed to save violation details. Error: {e}")
+        print(f"  !! CRITICAL: Failed to save violation details. Error: {e}")
+        raise # Re-raise the exception to signal failure

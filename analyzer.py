@@ -62,11 +62,9 @@ def process_analysis_results(results):
     severity = {'severe': 0, 'moderate': 0, 'mild': 0, 'unknown': 0}
     impact_map = {'critical': 'severe', 'serious': 'severe', 'moderate': 'moderate', 'minor': 'mild'}
     
-    # --- NEW: List to hold detailed violation info ---
     violation_details = []
 
     for v in violations:
-        # This part extracts details for the new sheet
         violation_details.append({
             "id": v.get('id'),
             "impact": v.get('impact'),
@@ -74,7 +72,6 @@ def process_analysis_results(results):
             "help_url": v.get('helpUrl')
         })
 
-        # This part is for the existing summary count
         is_wcag = False
         tags = v.get('tags', [])
         if any(tag in ['wcag2a', 'wcag21a'] for tag in tags):
@@ -107,5 +104,5 @@ def process_analysis_results(results):
         'highest_pass_level': highest_pass_level,
         'violations': counts,
         'severity': severity,
-        'details': violation_details  # Return the new detailed list
+        'details': violation_details
     }
